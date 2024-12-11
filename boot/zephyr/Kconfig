@@ -887,4 +887,8 @@ config MCUBOOT_VERIFY_IMG_ADDRESS
 	  also be useful when BOOT_DIRECT_XIP is enabled, to ensure that the image
 	  linked at the correct address is loaded.
 
+config MCUBOOT_IMXRT1176_FLEXSPI_REMAPPING
+	bool "Enable FlexSPI remapping for direct XIP with NXP IMXRT1176"
+	default n
+
 source "Kconfig.zephyr"
