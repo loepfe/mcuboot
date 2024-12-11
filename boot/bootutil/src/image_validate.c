@@ -56,6 +56,10 @@
 
 #include "bootutil_priv.h"
 
+#ifdef CONFIG_MCUBOOT_IMXRT1176_FLEXSPI_REMAPPING
+#include "rt1176_flexspi_remapping.h"
+#endif
+
 /*
  * Compute SHA hash over the image.
  * (SHA384 if ECDSA-P384 is being used,
@@ -382,7 +386,7 @@ static const uint16_t allowed_unprot_tlvs[] = {
  * Return non-zero if image could not be validated/does not validate.
  */
 fih_ret
-bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
+__attribute__((section(".itcm"))) bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
                       struct image_header *hdr, const struct flash_area *fap,
                       uint8_t *tmp_buf, uint32_t tmp_buf_sz, uint8_t *seed,
                       int seed_len, uint8_t *out_hash)
@@ -416,8 +420,63 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
     FIH_DECLARE(security_counter_valid, FIH_FAILURE);
 #endif
 
+#ifdef CONFIG_MCUBOOT_IMXRT1176_FLEXSPI_REMAPPING
+    const uint32_t secondary_slot_partition_offset =
+      SECONDARY_SLOT_PARTITION_OFFSET;
+
+    /* The offset of the flash area indicates the slot to boot. In case the
+       offset indicates slot1, we must remap slot1 to slot0 for OTFAD to kick in
+       and calculate the hash over the decrypted area. After the hash has been
+       calculated, the remapping is disabled again to not interfere with other
+       stuff that is than with the flash. */
+    if (fap->fa_off == secondary_slot_partition_offset) {
+        uint32_t flash_base = FLASH_BASE_ADDRESS;
+        uint32_t primary_slot_partition_offset = PRIMARY_SLOT_PARTITION_OFFSET;
+        uint32_t primary_slot_partition_size = PRIMARY_SLOT_PARTITION_SIZE;
+
+        /* Calculate remapping parameters */
+        const uint32_t slot0_start_address = flash_base +
+                                             primary_slot_partition_offset;
+        const uint32_t slot0_end_address = slot0_start_address +
+                                           primary_slot_partition_size;
+        const uint32_t remap_offset = secondary_slot_partition_offset -
+                                      primary_slot_partition_offset;
+
+        /* Configure and enable remapping using caculated paramters from
+           above */
+        const struct rt1176_flexspi_remap_config remap_config = {
+          .flexspi = FLEXSPI2,
+          .exec_area_start_address = slot0_start_address,
+          .exec_area_end_address = slot0_end_address,
+          .remap_offset = remap_offset,
+        };
+
+        rt1176_flexspi_remap_configure(&remap_config);
+        rt1176_flexspi_remap_enable();
+
+        /* We have to modify the flash area offset to point to the start of the
+           primary slot. However, for the calculations of the hash we need the
+           size of the secondary slot (in case the two slots differ in size).
+
+           We make a copy of the flash area since the one provided via parameter
+           is located in non-volatile memory and thus cannot be modified. */
+        struct flash_area my_fap;
+        memcpy(&my_fap, fap, sizeof(struct flash_area));
+        my_fap.fa_off = primary_slot_partition_offset;
+
+        rc = bootutil_img_hash(enc_state, image_index, hdr, &my_fap, tmp_buf,
+                tmp_buf_sz, hash, seed, seed_len);
+
+        rt1176_flexspi_remap_disable();
+    } else {
     rc = bootutil_img_hash(enc_state, image_index, hdr, fap, tmp_buf,
             tmp_buf_sz, hash, seed, seed_len);
+    }
+#else
+    rc = bootutil_img_hash(enc_state, image_index, hdr, fap, tmp_buf,
+            tmp_buf_sz, hash, seed, seed_len);
+#endif
+
     if (rc) {
         goto out;
     }
