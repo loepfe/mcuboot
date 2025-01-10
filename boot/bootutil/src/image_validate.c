@@ -24,13 +24,10 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-#include "MIMXRT1176_cm7.h"
-#include "bootutil/bootutil_log.h"
 
 #include <stddef.h>
 #include <stdint.h>
 #include <inttypes.h>
-#include <stdio.h>
 #include <string.h>
 
 #include <flash_map_backend/flash_map_backend.h>
@@ -427,25 +424,6 @@ __attribute__((section(".itcm"))) bootutil_img_validate(struct enc_key_data *enc
     const uint32_t secondary_slot_partition_offset =
       SECONDARY_SLOT_PARTITION_OFFSET;
 
-///////////////////////////////////////////////////////////////////////////////
-    uint32_t haddrstart = FLEXSPI2->HADDRSTART;
-    uint32_t haddrend = FLEXSPI2->HADDREND;
-    uint32_t haddroffset = FLEXSPI2->HADDROFFSET;
-
-    printf("Remap configuration before hash calculation\n");
-    printf("HADDRSTART : 0x%08X\n", FLEXSPI2->HADDRSTART);
-    printf("HADDREND   : 0x%08X\n",  FLEXSPI2->HADDREND);
-    printf("HADDROFFSET: 0x%08X\n",  FLEXSPI2->HADDROFFSET);
-
-    printf("With get_config\n");
-    struct _rt1176_flexspi_remap_config _config;
-    _rt1176_flexspi_remap_get_config(FLEXSPI2, &_config);
-    printf("exec_area_start_address: 0x%08X\n", _config.exec_area_start_address);
-    printf("exec_area_start_end    : 0x%08X\n",  _config.exec_area_end_address);
-    printf("remap_offset           : 0x%08X\n",  _config.remap_offset);
-    printf("enable                 : 0x%08X\n",  _config.enable);
-///////////////////////////////////////////////////////////////////////////////
-
     /* The offset of the flash area indicates the slot to boot. In case the
        offset indicates slot1, we must remap slot1 to slot0 for OTFAD to kick in
        and calculate the hash over the decrypted area. After the hash has been
@@ -473,7 +451,6 @@ __attribute__((section(".itcm"))) bootutil_img_validate(struct enc_key_data *enc
           .remap_offset = remap_offset,
         };
 
-        // printf("Changing remapping temporarily\n");
         rt1176_flexspi_remap_configure(&remap_config);
         rt1176_flexspi_remap_enable();
 
@@ -484,18 +461,14 @@ __attribute__((section(".itcm"))) bootutil_img_validate(struct enc_key_data *enc
            We make a copy of the flash area since the one provided via parameter
            is located in non-volatile memory and thus cannot be modified. */
         struct flash_area my_fap;
-        // printf("Copying fap\n");
         memcpy(&my_fap, fap, sizeof(struct flash_area));
         my_fap.fa_off = primary_slot_partition_offset;
 
-        // printf("Start calculating hash over SECONDARY slot\n");
         rc = bootutil_img_hash(enc_state, image_index, hdr, &my_fap, tmp_buf,
                 tmp_buf_sz, hash, seed, seed_len);
-        // printf("Finished calculating hash over SECONDARY slot\n");
 
         rt1176_flexspi_remap_disable();
     } else {
-    // printf("Calculating hash over PRIMARY slot\n");
     rc = bootutil_img_hash(enc_state, image_index, hdr, fap, tmp_buf,
             tmp_buf_sz, hash, seed, seed_len);
     }
@@ -503,45 +476,6 @@ __attribute__((section(".itcm"))) bootutil_img_validate(struct enc_key_data *enc
     rc = bootutil_img_hash(enc_state, image_index, hdr, fap, tmp_buf,
             tmp_buf_sz, hash, seed, seed_len);
 #endif
-
-///////////////////////////////////////////////////////////////////////////////
-    // printf("Remap configuration after hash calculation\n");
-    // printf("HADDRSTART : 0x%08X\n", FLEXSPI2->HADDRSTART);
-    // printf("HADDREND   : 0x%08X\n",  FLEXSPI2->HADDREND);
-    // printf("HADDROFFSET: 0x%08X\n",  FLEXSPI2->HADDROFFSET);
-
-    // printf("Restoring original remap configuration...\n");
-    uint32_t new_haddrstart = haddrstart & 0xFFFFFFFEu;
-
-    // printf("New HADDRSTART = 0x%08X\n", new_haddrstart);
-    // printf("New HADDREND  = 0x%08X\n", haddrend);
-    // printf("New HADDROFFSET = 0x%08X\n", haddroffset);
-
-    FLEXSPI2->HADDRSTART  = new_haddrstart;
-    FLEXSPI2->HADDREND    = haddrend;
-    FLEXSPI2->HADDROFFSET = haddroffset;
-
-    // printf("Enabling original remapping bassed on original setting ");
-    if (haddrstart && 0x00000001u) {
-      // printf("--> Enabling...\n");
-        FLEXSPI2->HADDRSTART |= 0x00000001u;
-
-    const uint32_t exec_area_size = new_haddrstart - haddrend;
-
-    SCB_InvalidateDCache_by_Addr ((void*)(new_haddrstart),
-                                  exec_area_size);
-
-   FLEXSPI2->AHBCR |= FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
-   FLEXSPI2->AHBCR &= ~FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
-    } else {
-      // printf("--> NOT Enabling...\n");
-    }
-
-    // printf("Remap configuration after restoring\n");
-    // printf("HADDRSTART : 0x%08X\n", FLEXSPI2->HADDRSTART);
-    // printf("HADDREND   : 0x%08X\n",  FLEXSPI2->HADDREND);
-    // printf("HADDROFFSET: 0x%08X\n",  FLEXSPI2->HADDROFFSET);
-///////////////////////////////////////////////////////////////////////////////
 
     if (rc) {
         goto out;
