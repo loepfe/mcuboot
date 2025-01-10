@@ -462,7 +462,7 @@ int main(void)
 #if !defined(MCUBOOT_DIRECT_XIP)
     BOOT_LOG_INF("Starting bootloader");
 #else
-    BOOT_LOG_INF("Starting Direct-XIP bootloader");
+    BOOT_LOG_INF("Starting Direct-XIP bootloader ---");
 #endif
 
 #ifdef CONFIG_MCUBOOT_INDICATION_LED

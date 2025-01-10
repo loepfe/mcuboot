@@ -21,9 +21,23 @@ struct rt1176_flexspi_remap_config {
         uint32_t remap_offset;         /**< Offset of remapped area */
 };
 
+struct _rt1176_flexspi_remap_config {
+        uint32_t exec_area_start_address;  /** Start address of execution area */
+        uint32_t exec_area_end_address;  /** End address of execution area */
+        uint32_t remap_offset;         /**< Offset of remapped area */
+        bool enable;
+};
+
 void rt1176_flexspi_remap_configure(const struct rt1176_flexspi_remap_config *config);
 void rt1176_flexspi_remap_enable(void);
 void rt1176_flexspi_remap_disable(void);
 bool rt1176_flexspi_is_remapping_enabled(void);
+
+void _rt1176_flexspi_remap_set_config(FLEXSPI_Type * flexspi,
+                                     const struct _rt1176_flexspi_remap_config *config);
+void _rt1176_flexspi_remap_get_config(FLEXSPI_Type * flexspi,
+                                     struct _rt1176_flexspi_remap_config *config);
+void _rt1176_flexspi_remap_print_config(const char* title,
+                                        const struct _rt1176_flexspi_remap_config* config);
 
 #endif

@@ -63,6 +63,8 @@ if(DEFINED CONFIG_MCUBOOT_IMXRT1176_FLEXSPI_REMAPPING)
   zephyr_library_sources(
   rt1176_flexspi_remapping.c
   )
+  message(STATUS "+++++++++++++++++ Current List Directory: ${CMAKE_CURRENT_LIST_DIR}")
+  zephyr_code_relocate(FILES ${CMAKE_CURRENT_LIST_DIR}/rt1176_flexspi_remapping.c LOCATION ${CONFIG_FLASH_MCUX_FLEXSPI_XIP_MEM}_TEXT)
 endif()
 
 if(DEFINED CONFIG_ENABLE_MGMT_PERUSER)
