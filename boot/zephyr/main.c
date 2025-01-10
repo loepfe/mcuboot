@@ -33,11 +33,6 @@
 
 #if defined(CONFIG_ARM)
 #include <cmsis_core.h>
-
-#ifdef CONFIG_MCUBOOT_IMXRT1176_FLEXSPI_REMAPPING
-#include "rt1176_flexspi_remapping.h"
-#endif
-
 #endif
 
 #include "io/io.h"
@@ -149,9 +144,8 @@ struct arm_vector_table {
     uint32_t reset;
 };
 
-__attribute__((section(".itcm"))) static void do_boot(struct boot_rsp *rsp)
+static void do_boot(struct boot_rsp *rsp)
 {
-    // MAS: THIS IS THE FUNCTION FOR ARM THAT WE NEED!
     struct arm_vector_table *vt;
 
     /* The beginning of the image is the ARM vector table, containing
@@ -168,42 +162,7 @@ __attribute__((section(".itcm"))) static void do_boot(struct boot_rsp *rsp)
     static uint32_t dst[2];
 
     /* Jump to flash image */
-#ifdef CONFIG_MCUBOOT_IMXRT1176_FLEXSPI_REMAPPING
-    const uint32_t flash_base = FLASH_BASE_ADDRESS;
-    const uint32_t primary_slot_partition_offset = PRIMARY_SLOT_PARTITION_OFFSET;
-    const uint32_t primary_slot_partition_size = PRIMARY_SLOT_PARTITION_SIZE;
-    const uint32_t secondary_slot_partition_offset = SECONDARY_SLOT_PARTITION_OFFSET;
-
-    const uint32_t exec_area_start_address = flash_base +
-                                             primary_slot_partition_offset;
-    const uint32_t exec_area_end_address = exec_area_start_address +
-                                           primary_slot_partition_size;
-    const int32_t remap_offset = (rsp->br_image_off == primary_slot_partition_offset) ? 0 : (secondary_slot_partition_offset - primary_slot_partition_offset);
-
-    /* Cordially inform the curious engineer */
-    BOOT_LOG_INF("Configuring FlexSPI remapping for encrypted direct XIP");
-    BOOT_LOG_INF("Execution Area Start Address: 0x%08X", exec_area_start_address);
-    BOOT_LOG_INF("Execution Area End   Address: 0x%08X", exec_area_end_address);
-    BOOT_LOG_INF("Remap Offset                : 0x%08X", remap_offset);
-    if (remap_offset > 0) {
-        BOOT_LOG_INF("\033[1m--> Remapping secondary slot to primary slot!\033[0m");
-    }
-
-    /* Configure and enable remapping using caculated values from above */
-    const struct rt1176_flexspi_remap_config remap_config = {
-      .flexspi = FLEXSPI2,
-      .exec_area_start_address = exec_area_start_address,
-      .exec_area_end_address = exec_area_end_address,
-      .remap_offset = remap_offset,
-    };
-
-    rt1176_flexspi_remap_configure(&remap_config);
-    rt1176_flexspi_remap_enable();
-
-    rc = flash_area_open(FIXED_PARTITION_ID(slot0_partition), &fap);
-#else
     rc = flash_area_open(rsp->br_flash_dev_id, &fap);
-#endif
     assert(rc == 0);
 
     rc = flash_area_read(fap, rsp->br_hdr->ih_hdr_size, dst, sizeof(dst));
@@ -462,7 +421,7 @@ int main(void)
 #if !defined(MCUBOOT_DIRECT_XIP)
     BOOT_LOG_INF("Starting bootloader");
 #else
-    BOOT_LOG_INF("Starting Direct-XIP bootloader ---");
+    BOOT_LOG_INF("Starting Direct-XIP bootloader");
 #endif
 
 #ifdef CONFIG_MCUBOOT_INDICATION_LED
