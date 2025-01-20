@@ -46,6 +46,16 @@ endif()
  add_subdirectory(${NRFXLIB_DIR} ${PROJECT_BINARY_DIR}/nrfxlib)
 endif()
 
+###############################################################################
+zephyr_library_include_directories(
+  /home/mas/work/loepfe/Eira.Clearer-/Flora/modules/hal/nxp/mcux/mcux-sdk/drivers/otfad/
+  )
+
+zephyr_library_sources(
+  /home/mas/work/loepfe/Eira.Clearer-/Flora/modules/hal/nxp/mcux/mcux-sdk/drivers/otfad/fsl_otfad.c
+  )
+###############################################################################
+
 zephyr_library_include_directories(
   include
   )
@@ -286,7 +296,7 @@ if(NOT CONFIG_BOOT_SIGNATURE_KEY_FILE STREQUAL "")
   if(IS_ABSOLUTE ${CONFIG_BOOT_SIGNATURE_KEY_FILE})
     set(KEY_FILE ${CONFIG_BOOT_SIGNATURE_KEY_FILE})
   elseif((DEFINED CONF_DIR) AND
-	 (EXISTS ${CONF_DIR}/${CONFIG_BOOT_SIGNATURE_KEY_FILE}))
+         (EXISTS ${CONF_DIR}/${CONFIG_BOOT_SIGNATURE_KEY_FILE}))
     set(KEY_FILE ${CONF_DIR}/${CONFIG_BOOT_SIGNATURE_KEY_FILE})
   else()
     set(KEY_FILE ${MCUBOOT_DIR}/${CONFIG_BOOT_SIGNATURE_KEY_FILE})
@@ -326,7 +336,7 @@ if(CONFIG_BOOT_ENCRYPTION_KEY_FILE AND NOT CONFIG_BOOT_ENCRYPTION_KEY_FILE STREQ
   if(IS_ABSOLUTE ${CONFIG_BOOT_ENCRYPTION_KEY_FILE})
     set(KEY_FILE ${CONFIG_BOOT_ENCRYPTION_KEY_FILE})
   elseif((DEFINED CONF_DIR) AND
-	 (EXISTS ${CONF_DIR}/${CONFIG_BOOT_ENCRYPTION_KEY_FILE}))
+         (EXISTS ${CONF_DIR}/${CONFIG_BOOT_ENCRYPTION_KEY_FILE}))
     set(KEY_FILE ${CONF_DIR}/${CONFIG_BOOT_ENCRYPTION_KEY_FILE})
   else()
     set(KEY_FILE ${MCUBOOT_DIR}/${CONFIG_BOOT_ENCRYPTION_KEY_FILE})
