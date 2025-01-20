@@ -532,12 +532,12 @@ __attribute__((section(".itcm"))) void do_otfad_stuff(void)
     OTFAD2->CR = otfad2_cr;
     BOOT_LOG_INF("OTFAD2_CR    = 0x%08X", OTFAD2->CR);
 
-    // iomuxc_gpr35 = IOMUXC_GPR->GPR35;
-    // BOOT_LOG_INF("IOMUXC_GPR35 = 0x%08X", iomuxc_gpr35);
-    // iomuxc_gpr35 |= IOMUXC_GPR_GPR35_FLEXSPI2_OTFAD_EN_MASK;
-    // BOOT_LOG_INF("Writing 0x%08X to GPR35", iomuxc_gpr35);
-    // IOMUXC_GPR->GPR35 = iomuxc_gpr35;
-    // BOOT_LOG_INF("IOMUXC_GPR35 = 0x%08X", IOMUXC_GPR->GPR35);
+    iomuxc_gpr35 = IOMUXC_GPR->GPR35;
+    BOOT_LOG_INF("IOMUXC_GPR35 = 0x%08X", iomuxc_gpr35);
+    iomuxc_gpr35 |= IOMUXC_GPR_GPR35_FLEXSPI2_OTFAD_EN_MASK;
+    BOOT_LOG_INF("Writing 0x%08X to GPR35", iomuxc_gpr35);
+    IOMUXC_GPR->GPR35 = iomuxc_gpr35;
+    BOOT_LOG_INF("IOMUXC_GPR35 = 0x%08X", IOMUXC_GPR->GPR35);
 
    /* Do software reset or clear AHB buffer directly. */
    FLEXSPI2->AHBCR |= FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
@@ -556,6 +556,63 @@ __attribute__((section(".itcm"))) void do_otfad_stuff(void)
     BOOT_LOG_INF("OTFAD2 is ON.  Value at address %p is %08X", pointer,  value2);
 }
 
+
+__attribute__((section(".itcm"))) void disable_otfad(void)
+{
+    /*--- BEGIN CRITICAL SECTION ---------------------------------------------*/
+    unsigned int lock = irq_lock();
+
+    // Switch off OTFAD
+    uint32_t iomuxc_gpr35 = IOMUXC_GPR->GPR35;
+    iomuxc_gpr35 ^= IOMUXC_GPR_GPR35_FLEXSPI2_OTFAD_EN_MASK;
+    IOMUXC_GPR->GPR35 = iomuxc_gpr35;
+
+    uint32_t otfad2_cr = OTFAD2->CR;
+    otfad2_cr ^= OTFAD_CR_GE_MASK | OTFAD_CR_SKBP_MASK | OTFAD_CR_KBPE_MASK;
+    OTFAD2->CR = otfad2_cr;
+
+   /* Do software reset or clear AHB buffer directly. */
+   FLEXSPI2->AHBCR |= FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
+   FLEXSPI2->AHBCR &= ~FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
+
+    /* Invalidate data cache. At this moment, the flash memory is considered
+       data since no code is not executed from it.
+    OTFAD2 region start address: 0x60100400
+    OTFAD2 region end address  : 0x6013F000 */
+    SCB_InvalidateDCache_by_Addr ((void*)(0x60100400u), 0x6013F000u - 0x60100400u);
+
+    irq_unlock(lock);
+    /*--- END CRITICAL SECTION -----------------------------------------------*/
+}
+
+ __attribute__((section(".itcm"))) void enable_otfad(void)
+{
+    /*--- BEGIN CRITICAL SECTION ---------------------------------------------*/
+    unsigned int lock = irq_lock();
+
+    // Switch on OTFAD
+    uint32_t otfad2_cr = OTFAD2->CR;
+    otfad2_cr |= OTFAD_CR_GE_MASK | OTFAD_CR_SKBP_MASK | OTFAD_CR_KBPE_MASK;
+    OTFAD2->CR = otfad2_cr;
+
+    uint32_t iomuxc_gpr35 = IOMUXC_GPR->GPR35;
+    iomuxc_gpr35 |= IOMUXC_GPR_GPR35_FLEXSPI2_OTFAD_EN_MASK;
+    IOMUXC_GPR->GPR35 = iomuxc_gpr35;
+
+   /* Do software reset or clear AHB buffer directly. */
+   FLEXSPI2->AHBCR |= FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
+   FLEXSPI2->AHBCR &= ~FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
+
+    /* Invalidate data cache. At this moment, the flash memory is considered
+       data since no code is not executed from it.
+    OTFAD2 region start address: 0x60100400
+    OTFAD2 region end address  : 0x6013F000 */
+    SCB_InvalidateDCache_by_Addr ((void*)(0x60100400u), 0x6013F000u - 0x60100400u);
+
+    irq_unlock(lock);
+    /*--- END CRITICAL SECTION -----------------------------------------------*/
+}
+
 int main(void)
 {
     struct boot_rsp rsp;
@@ -566,8 +623,24 @@ int main(void)
     MCUBOOT_WATCHDOG_FEED();
 
     k_msleep(1000);
+ ///////////////////////////////////////////////////////////////////////////////
+    // do_otfad_stuff();
 
-    do_otfad_stuff();
+    const uintptr_t address = 0x60104000;
+    const uint32_t* pointer = (uint32_t*)address;
+    const uint32_t value0 = *pointer;
+    BOOT_LOG_INF("OTFAD2 is ON.  Value at address %p is %08X", pointer,  value0);
+
+    disable_otfad();
+
+    const uint32_t value1 = *pointer;
+    BOOT_LOG_INF("OTFAD2 is OFF. Value at address %p is %08X", pointer,  value1);
+
+    enable_otfad();
+
+    const uint32_t value2 = *pointer;
+    BOOT_LOG_INF("OTFAD2 is ON.  Value at address %p is %08X", pointer,  value2);
+ ///////////////////////////////////////////////////////////////////////////////
 
 #if !defined(MCUBOOT_DIRECT_XIP)
     BOOT_LOG_INF("Starting bootloader");
