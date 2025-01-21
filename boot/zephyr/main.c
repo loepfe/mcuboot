@@ -622,24 +622,24 @@ int main(void)
     MCUBOOT_WATCHDOG_SETUP();
     MCUBOOT_WATCHDOG_FEED();
 
-    k_msleep(1000);
+    k_msleep(500);
  ///////////////////////////////////////////////////////////////////////////////
     // do_otfad_stuff();
 
-    const uintptr_t address = 0x60104000;
-    const uint32_t* pointer = (uint32_t*)address;
-    const uint32_t value0 = *pointer;
-    BOOT_LOG_INF("OTFAD2 is ON.  Value at address %p is %08X", pointer,  value0);
+    // const uintptr_t address = 0x60104000;
+    // const uint32_t* pointer = (uint32_t*)address;
+    // const uint32_t value0 = *pointer;
+    // BOOT_LOG_INF("OTFAD2 is ON.  Value at address %p is %08X", pointer,  value0);
 
-    disable_otfad();
+    // disable_otfad();
 
-    const uint32_t value1 = *pointer;
-    BOOT_LOG_INF("OTFAD2 is OFF. Value at address %p is %08X", pointer,  value1);
+    // const uint32_t value1 = *pointer;
+    // BOOT_LOG_INF("OTFAD2 is OFF. Value at address %p is %08X", pointer,  value1);
 
-    enable_otfad();
+    // enable_otfad();
 
-    const uint32_t value2 = *pointer;
-    BOOT_LOG_INF("OTFAD2 is ON.  Value at address %p is %08X", pointer,  value2);
+    // const uint32_t value2 = *pointer;
+    // BOOT_LOG_INF("OTFAD2 is ON.  Value at address %p is %08X", pointer,  value2);
  ///////////////////////////////////////////////////////////////////////////////
 
 #if !defined(MCUBOOT_DIRECT_XIP)
