@@ -15,7 +15,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <zephyr/device.h>
+#include <zephyr/retention/retention.h>
 
+#include "zephyr/sys/reboot.h"
 #include <fsl_otfad.h>
 #include <fsl_flexspi.h>
 #include <MIMXRT1176_cm7.h>
@@ -29,6 +32,9 @@
 #include <zephyr/drivers/timer/system_timer.h>
 #include <zephyr/usb/usb_device.h>
 #include <soc.h>
+#include <stdint.h>
+#include <string.h>
+#include <sys/types.h>
 #include <zephyr/linker/linker-defs.h>
 
 #if defined(CONFIG_BOOT_DISABLE_CACHES)
@@ -161,26 +167,26 @@ static void do_boot(struct boot_rsp *rsp)
     /* Get ram address for image */
     vt = (struct arm_vector_table *)(rsp->br_hdr->ih_load_addr + rsp->br_hdr->ih_hdr_size);
 #else
-    int rc;
-    const struct flash_area *fap;
-    static uint32_t dst[2];
+    // int rc;
+    // const struct flash_area *fap;
+    // static uint32_t dst[2];
 
-    /* Jump to flash image */
-    rc = flash_area_open(rsp->br_flash_dev_id, &fap);
-    assert(rc == 0);
+    // /* Jump to flash image */
+    // rc = flash_area_open(rsp->br_flash_dev_id, &fap);
+    // assert(rc == 0);
 
-    rc = flash_area_read(fap, rsp->br_hdr->ih_hdr_size, dst, sizeof(dst));
-    assert(rc == 0);
+    // rc = flash_area_read(fap, rsp->br_hdr->ih_hdr_size, dst, sizeof(dst));
+    // assert(rc == 0);
 #ifndef CONFIG_ASSERT
     /* Enter a lock up as asserts are disabled */
-    if (rc != 0) {
-        while (1);
-    }
+    // if (rc != 0) {
+    //     while (1);
+    // }
 #endif
 
-    flash_area_close(fap);
+    // flash_area_close(fap);
 
-    vt = (struct arm_vector_table *)dst;
+    vt = (struct arm_vector_table *)0x60100400;
 #endif
 
     if (IS_ENABLED(CONFIG_SYSTEM_TIMER_HAS_DISABLE_SUPPORT)) {
@@ -412,6 +418,62 @@ static void boot_serial_enter()
     __ASSERT(0, "Bootloader serial process was terminated unexpectedly.\n");
 }
 #endif
+static const uint8_t magic_pattern[] = {0xB1, 0x6B, 0x00, 0xB5};
+static const struct device* retention0 = DEVICE_DT_GET(DT_NODELABEL(retention0));
+
+static bool get_is_image_validated(void)
+{
+    uint8_t readback_buffer[sizeof(magic_pattern)];
+
+    int retention0_valid =  retention_is_valid(retention0);
+    retention_read(retention0, 0, readback_buffer, sizeof(readback_buffer));
+
+    bool magic_patter_found = false;
+    if (0 == memcmp(magic_pattern, readback_buffer, sizeof(magic_pattern))) {
+      magic_patter_found = true;
+    }
+
+    return (retention0_valid == 1) && magic_patter_found;
+}
+
+static void set_is_image_validated_pattern(void)
+{
+    retention_write(retention0, 0, magic_pattern, sizeof(magic_pattern));
+}
+
+static void reset_is_image_validated_pattern(void)
+{
+    const uint8_t anti_magic_pattern[] = {0xCC, 0xCC, 0xCC, 0xCC};
+    retention_write(retention0, 0, anti_magic_pattern, sizeof(anti_magic_pattern));
+}
+
+__attribute__((section(".itcm"))) void disable_otfad(void)
+{
+    /*--- BEGIN CRITICAL SECTION ---------------------------------------------*/
+    unsigned int lock = irq_lock();
+
+    // Switch off OTFAD
+    uint32_t iomuxc_gpr35 = IOMUXC_GPR->GPR35;
+    iomuxc_gpr35 ^= IOMUXC_GPR_GPR35_FLEXSPI2_OTFAD_EN_MASK;
+    IOMUXC_GPR->GPR35 = iomuxc_gpr35;
+
+    uint32_t otfad2_cr = OTFAD2->CR;
+    otfad2_cr ^= OTFAD_CR_GE_MASK | OTFAD_CR_SKBP_MASK | OTFAD_CR_KBPE_MASK;
+    OTFAD2->CR = otfad2_cr;
+
+   /* Do software reset or clear AHB buffer directly. */
+   FLEXSPI2->AHBCR |= FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
+   FLEXSPI2->AHBCR &= ~FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
+
+    /* Invalidate data cache. At this moment, the flash memory is considered
+       data since no code is not executed from it.
+    OTFAD2 region start address: 0x60100400
+    OTFAD2 region end address  : 0x6013F000 */
+    SCB_InvalidateDCache_by_Addr ((void*)(0x60100400u), 0x6013F000u - 0x60100400u);
+
+    irq_unlock(lock);
+    /*--- END CRITICAL SECTION -----------------------------------------------*/
+}
 
 // __attribute__((section(".itcm"))) void do_otfad_stuff(void)
 // {
@@ -557,61 +619,61 @@ __attribute__((section(".itcm"))) void do_otfad_stuff(void)
 }
 
 
-__attribute__((section(".itcm"))) void disable_otfad(void)
-{
-    /*--- BEGIN CRITICAL SECTION ---------------------------------------------*/
-    unsigned int lock = irq_lock();
+// __attribute__((section(".itcm"))) void disable_otfad(void)
+// {
+//     /*--- BEGIN CRITICAL SECTION ---------------------------------------------*/
+//     unsigned int lock = irq_lock();
 
-    // Switch off OTFAD
-    uint32_t iomuxc_gpr35 = IOMUXC_GPR->GPR35;
-    iomuxc_gpr35 ^= IOMUXC_GPR_GPR35_FLEXSPI2_OTFAD_EN_MASK;
-    IOMUXC_GPR->GPR35 = iomuxc_gpr35;
+//     // Switch off OTFAD
+//     uint32_t iomuxc_gpr35 = IOMUXC_GPR->GPR35;
+//     iomuxc_gpr35 ^= IOMUXC_GPR_GPR35_FLEXSPI2_OTFAD_EN_MASK;
+//     IOMUXC_GPR->GPR35 = iomuxc_gpr35;
 
-    uint32_t otfad2_cr = OTFAD2->CR;
-    otfad2_cr ^= OTFAD_CR_GE_MASK | OTFAD_CR_SKBP_MASK | OTFAD_CR_KBPE_MASK;
-    OTFAD2->CR = otfad2_cr;
+//     uint32_t otfad2_cr = OTFAD2->CR;
+//     otfad2_cr ^= OTFAD_CR_GE_MASK | OTFAD_CR_SKBP_MASK | OTFAD_CR_KBPE_MASK;
+//     OTFAD2->CR = otfad2_cr;
 
-   /* Do software reset or clear AHB buffer directly. */
-   FLEXSPI2->AHBCR |= FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
-   FLEXSPI2->AHBCR &= ~FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
+//    /* Do software reset or clear AHB buffer directly. */
+//    FLEXSPI2->AHBCR |= FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
+//    FLEXSPI2->AHBCR &= ~FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
 
-    /* Invalidate data cache. At this moment, the flash memory is considered
-       data since no code is not executed from it.
-    OTFAD2 region start address: 0x60100400
-    OTFAD2 region end address  : 0x6013F000 */
-    SCB_InvalidateDCache_by_Addr ((void*)(0x60100400u), 0x6013F000u - 0x60100400u);
+//     /* Invalidate data cache. At this moment, the flash memory is considered
+//        data since no code is not executed from it.
+//     OTFAD2 region start address: 0x60100400
+//     OTFAD2 region end address  : 0x6013F000 */
+//     SCB_InvalidateDCache_by_Addr ((void*)(0x60100400u), 0x6013F000u - 0x60100400u);
 
-    irq_unlock(lock);
-    /*--- END CRITICAL SECTION -----------------------------------------------*/
-}
+//     irq_unlock(lock);
+//     /*--- END CRITICAL SECTION -----------------------------------------------*/
+// }
 
- __attribute__((section(".itcm"))) void enable_otfad(void)
-{
-    /*--- BEGIN CRITICAL SECTION ---------------------------------------------*/
-    unsigned int lock = irq_lock();
+//  __attribute__((section(".itcm"))) void enable_otfad(void)
+// {
+//     /*--- BEGIN CRITICAL SECTION ---------------------------------------------*/
+//     unsigned int lock = irq_lock();
 
-    // Switch on OTFAD
-    uint32_t otfad2_cr = OTFAD2->CR;
-    otfad2_cr |= OTFAD_CR_GE_MASK | OTFAD_CR_SKBP_MASK | OTFAD_CR_KBPE_MASK;
-    OTFAD2->CR = otfad2_cr;
+//     // Switch on OTFAD
+//     uint32_t otfad2_cr = OTFAD2->CR;
+//     otfad2_cr |= OTFAD_CR_GE_MASK | OTFAD_CR_SKBP_MASK | OTFAD_CR_KBPE_MASK;
+//     OTFAD2->CR = otfad2_cr;
 
-    uint32_t iomuxc_gpr35 = IOMUXC_GPR->GPR35;
-    iomuxc_gpr35 |= IOMUXC_GPR_GPR35_FLEXSPI2_OTFAD_EN_MASK;
-    IOMUXC_GPR->GPR35 = iomuxc_gpr35;
+//     uint32_t iomuxc_gpr35 = IOMUXC_GPR->GPR35;
+//     iomuxc_gpr35 |= IOMUXC_GPR_GPR35_FLEXSPI2_OTFAD_EN_MASK;
+//     IOMUXC_GPR->GPR35 = iomuxc_gpr35;
 
-   /* Do software reset or clear AHB buffer directly. */
-   FLEXSPI2->AHBCR |= FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
-   FLEXSPI2->AHBCR &= ~FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
+//    /* Do software reset or clear AHB buffer directly. */
+//    FLEXSPI2->AHBCR |= FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
+//    FLEXSPI2->AHBCR &= ~FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
 
-    /* Invalidate data cache. At this moment, the flash memory is considered
-       data since no code is not executed from it.
-    OTFAD2 region start address: 0x60100400
-    OTFAD2 region end address  : 0x6013F000 */
-    SCB_InvalidateDCache_by_Addr ((void*)(0x60100400u), 0x6013F000u - 0x60100400u);
+//     /* Invalidate data cache. At this moment, the flash memory is considered
+//        data since no code is not executed from it.
+//     OTFAD2 region start address: 0x60100400
+//     OTFAD2 region end address  : 0x6013F000 */
+//     SCB_InvalidateDCache_by_Addr ((void*)(0x60100400u), 0x6013F000u - 0x60100400u);
 
-    irq_unlock(lock);
-    /*--- END CRITICAL SECTION -----------------------------------------------*/
-}
+//     irq_unlock(lock);
+//     /*--- END CRITICAL SECTION -----------------------------------------------*/
+// }
 
 int main(void)
 {
@@ -622,7 +684,56 @@ int main(void)
     MCUBOOT_WATCHDOG_SETUP();
     MCUBOOT_WATCHDOG_FEED();
 
-    k_msleep(500);
+    k_msleep(2000);
+
+ ///////////////////////////////////////////////////////////////////////////////
+ // Retention stuff
+    // BOOT_LOG_INF("--- BEGIN: RETENTION STUFF ---");
+
+    // const uint8_t retention0_data[] = {0, 1, 2, 3, 4, 5, 6, 7};
+    // const uint8_t retention1_data[] = {10, 11, 12, 13, 14, 15, 16, 17};
+    // uint8_t readback_buffer[sizeof(retention0_data)];
+
+    // const struct device* retention0 = DEVICE_DT_GET(DT_NODELABEL(retention0));
+    // const struct device* retention1 = DEVICE_DT_GET(DT_NODELABEL(retention1));
+
+    // // ssize_t retention0_size =  retention_size(retention0);
+    // // ssize_t retention1_size =  retention_size(retention1);
+    // // BOOT_LOG_INF("retention0_size = %d", retention0_size);
+    // // BOOT_LOG_INF("retention1_size = %d", retention1_size);
+
+    // int retention0_valid =  retention_is_valid(retention0);
+    // int retention1_valid =  retention_is_valid(retention1);
+    // BOOT_LOG_INF("retention0_valid = %d", retention0_valid);
+    // BOOT_LOG_INF("retention1_valid = %d", retention1_valid);
+
+    // if(retention0_valid == 1 && retention1_valid == 1) {
+    //   retention_read(retention0, 0, readback_buffer, sizeof(readback_buffer));
+    //   if (0 == memcmp(retention0_data, readback_buffer, sizeof(readback_buffer))) {
+    //       BOOT_LOG_INF("retained0 buffer ok");
+    //   } else {
+    //       BOOT_LOG_INF("retained0 buffer NOT ok");
+    //   }
+
+    //   retention_read(retention1, 0, readback_buffer, sizeof(readback_buffer));
+    //   if (0 == memcmp(retention1_data, readback_buffer, sizeof(readback_buffer))) {
+    //       BOOT_LOG_INF("retained1 buffer ok");
+    //   } else {
+    //       BOOT_LOG_INF("retained1 buffer NOT ok");
+    //   }
+
+    //   while (true) {}
+    // } else {
+    // int retention0_rc = retention_write(retention0, 0, retention0_data, sizeof(retention0_data));
+    // int retention1_rc = retention_write(retention1, 0, retention1_data, sizeof(retention1_data));
+    // BOOT_LOG_INF("retention0_rc = %d", retention0_rc);
+    // BOOT_LOG_INF("retention1_rc = %d", retention1_rc);
+    // }
+
+    // sys_reboot(0);
+    // BOOT_LOG_INF("--- END: RETENTION STUFF ---");
+ ///////////////////////////////////////////////////////////////////////////////
+
  ///////////////////////////////////////////////////////////////////////////////
     // do_otfad_stuff();
 
@@ -631,7 +742,13 @@ int main(void)
     // const uint32_t value0 = *pointer;
     // BOOT_LOG_INF("OTFAD2 is ON.  Value at address %p is %08X", pointer,  value0);
 
-    // disable_otfad();
+    // if (!retention_is_valid(retention0)) {
+    //   uint8_t readback_buffer[sizeof(retention0_data)];
+
+    //   retention_read(retention0, 0, readback_buffer, sizeof(readback_buffer));
+    //   if (0 == memcmp(retention0_data, readback_buffer, sizeof(readback_buffer))) {
+    //   disable_otfad();
+    // }
 
     // const uint32_t value1 = *pointer;
     // BOOT_LOG_INF("OTFAD2 is OFF. Value at address %p is %08X", pointer,  value1);
@@ -722,7 +839,37 @@ int main(void)
 #endif
 #endif
 
-    FIH_CALL(boot_go, fih_rc, &rsp);
+    bool is_image_validated = get_is_image_validated();
+      if (is_image_validated) {
+        /* Image already validated. Thus return success. */
+        printf("--- Image already validated ---\n");
+        printf("--- Resetting magic pattern(1)... ");
+        reset_is_image_validated_pattern();
+        printf("done ---\n");
+        fih_rc = FIH_SUCCESS;
+      } else {
+        /* Disable OTFAD. Signature is calculated over encrypted data */
+        printf("--- Disabling OTFAD... ");
+        disable_otfad();
+        printf("done ---\n");
+        printf("--- Validating image... ");
+        printf("done ---\n");
+        FIH_CALL(boot_go, fih_rc, &rsp);
+    BOOT_LOG_INF("Bootloader chainload address offset: 0x%x",
+                 rsp.br_image_off);
+    BOOT_LOG_INF("Image version: v%d.%d.%d", rsp.br_hdr->ih_ver.iv_major,
+                                                    rsp.br_hdr->ih_ver.iv_minor,
+                                                    rsp.br_hdr->ih_ver.iv_revision);
+      }
+
+
+      if(!is_image_validated) {
+          printf("--- Setting magic pattern... ");
+          set_is_image_validated_pattern();
+          printf("done ---\n");
+          printf("--- REBOOTING! ---\n");
+      sys_reboot(0);
+      }
 
 #ifdef CONFIG_BOOT_SERIAL_BOOT_MODE
     if (io_detect_boot_mode()) {
@@ -773,13 +920,13 @@ int main(void)
     BOOT_LOG_INF("Bootloader chainload address offset: 0x%x",
                  rsp.br_hdr->ih_load_addr);
 #else
-    BOOT_LOG_INF("Bootloader chainload address offset: 0x%x",
-                 rsp.br_image_off);
+    // BOOT_LOG_INF("Bootloader chainload address offset: 0x%x",
+    //              rsp.br_image_off);
 #endif
 
-    BOOT_LOG_INF("Image version: v%d.%d.%d", rsp.br_hdr->ih_ver.iv_major,
-                                                    rsp.br_hdr->ih_ver.iv_minor,
-                                                    rsp.br_hdr->ih_ver.iv_revision);
+    // BOOT_LOG_INF("Image version: v%d.%d.%d", rsp.br_hdr->ih_ver.iv_major,
+    //                                                 rsp.br_hdr->ih_ver.iv_minor,
+    //                                                 rsp.br_hdr->ih_ver.iv_revision);
 
 #if defined(MCUBOOT_DIRECT_XIP)
     BOOT_LOG_INF("Jumping to the image slot");
