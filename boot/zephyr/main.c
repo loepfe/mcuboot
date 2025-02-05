@@ -52,6 +52,12 @@
 #include "bootutil/mcuboot_uuid.h"
 #endif /* CONFIG_MCUBOOT_UUID_VID || CONFIG_MCUBOOT_UUID_CID */
 
+#ifdef CONFIG_CUSTOM_MCUBOOT_BOOTLOADER
+#include <zephyr/device.h>
+#include <zephyr/retention/retention.h>
+#include "zephyr/sys/reboot.h"
+#endif
+
 /* Check if Espressif target is supported */
 #ifdef CONFIG_SOC_FAMILY_ESPRESSIF_ESP32
 
@@ -163,6 +169,13 @@ static void do_boot(struct boot_rsp *rsp)
 #ifdef MCUBOOT_RAM_LOAD
     /* Get ram address for image */
     vt = (struct arm_vector_table *)(rsp->br_hdr->ih_load_addr + rsp->br_hdr->ih_hdr_size);
+#elif defined (CONFIG_CUSTOM_MCUBOOT_BOOTLOADER)
+    const uint32_t vt_address = CONFIG_FLASH_BASE_ADDRESS +
+                                FIXED_PARTITION_OFFSET(slot0_partition) +
+                                CONFIG_FLEXSPI_CONFIG_BLOCK_OFFSET;
+
+    BOOT_LOG_DBG("vt@0x%08X", vt_address);
+    vt = (struct arm_vector_table *)vt_address;
 #else
     uintptr_t flash_base;
     int rc;
@@ -494,6 +507,76 @@ static void boot_serial_enter()
 }
 #endif
 
+#ifdef CONFIG_CUSTOM_MCUBOOT_BOOTLOADER
+static const uint8_t magic_pattern[] = {0xB1, 0x6B, 0x00, 0xB5};
+static const struct device* otfad_workaround_area =
+  DEVICE_DT_GET(DT_NODELABEL(otfad_workaround_area));
+
+static bool get_is_image_validated(void)
+{
+    uint8_t readback_buffer[sizeof(magic_pattern)];
+
+    const int retention0_valid =  retention_is_valid(otfad_workaround_area);
+    retention_read(otfad_workaround_area,
+                   0,
+                   readback_buffer,
+                   sizeof(readback_buffer));
+
+    bool magic_patter_found = false;
+    if (0 == memcmp(magic_pattern, readback_buffer, sizeof(magic_pattern))) {
+      magic_patter_found = true;
+    }
+
+    return (retention0_valid == 1) && magic_patter_found;
+}
+
+static void set_is_image_validated_pattern(void)
+{
+    retention_write(otfad_workaround_area,
+                    0,
+                    magic_pattern,
+                    sizeof(magic_pattern));
+}
+
+static void reset_is_image_validated_pattern(void)
+{
+    const uint8_t anti_magic_pattern[] = {0xCC, 0xCC, 0xCC, 0xCC};
+    retention_write(otfad_workaround_area,
+                    0,
+                    anti_magic_pattern,
+                    sizeof(anti_magic_pattern));
+}
+
+__attribute__((section(".itcm"))) void disable_otfad(void)
+{
+    /*--- BEGIN CRITICAL SECTION ---------------------------------------------*/
+    unsigned int lock = irq_lock();
+
+    // Switch off OTFAD
+    uint32_t iomuxc_gpr35 = IOMUXC_GPR->GPR35;
+    iomuxc_gpr35 ^= IOMUXC_GPR_GPR35_FLEXSPI2_OTFAD_EN_MASK;
+    IOMUXC_GPR->GPR35 = iomuxc_gpr35;
+
+    uint32_t otfad2_cr = OTFAD2->CR;
+    otfad2_cr ^= OTFAD_CR_GE_MASK | OTFAD_CR_SKBP_MASK | OTFAD_CR_KBPE_MASK;
+    OTFAD2->CR = otfad2_cr;
+
+   /* Do software reset or clear AHB buffer directly. */
+   FLEXSPI2->AHBCR |= FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
+   FLEXSPI2->AHBCR &= ~FLEXSPI_AHBCR_CLRAHBRXBUF_MASK;
+
+    /* Invalidate data cache. At this moment, the flash memory is considered
+       data since no code is not executed from it.
+    OTFAD2 region start address: 0x60100400
+    OTFAD2 region end address  : 0x6013F000 */
+    SCB_InvalidateDCache_by_Addr ((void*)(0x60100400u),
+                                  0x6013F000u - 0x60100400u);
+
+    irq_unlock(lock);
+    /*--- END CRITICAL SECTION -----------------------------------------------*/
+}
+#endif
+
 int main(void)
 {
     struct boot_rsp rsp;
@@ -602,11 +685,38 @@ int main(void)
 #endif
 #endif
 
+#ifndef CONFIG_CUSTOM_MCUBOOT_BOOTLOADER
     BOOT_HOOK_GO_CALL_FIH(boot_go_hook, FIH_BOOT_HOOK_REGULAR, fih_rc, &rsp);
     if (FIH_EQ(fih_rc, FIH_BOOT_HOOK_REGULAR)) {
         FIH_CALL(boot_go, fih_rc, &rsp);
     }
     BOOT_LOG_DBG("Left boot_go with success == %d", FIH_EQ(fih_rc, FIH_SUCCESS) ? 1 : 0);
+#else
+    const bool is_image_validated = get_is_image_validated();
+    if (is_image_validated) {
+      BOOT_LOG_DBG("Image already validated");
+      BOOT_LOG_DBG("Resetting magic pattern (validation)");
+      reset_is_image_validated_pattern();
+      fih_rc = FIH_SUCCESS;
+    } else {
+      BOOT_LOG_DBG("Disabling OTFAD");
+      disable_otfad();
+      BOOT_LOG_DBG("Validating image");
+      FIH_CALL(boot_go, fih_rc, &rsp);
+    }
+
+    if((!is_image_validated) && FIH_EQ(fih_rc, FIH_SUCCESS)) {
+      BOOT_LOG_DBG("Bootloader chainload address offset: 0x%x",
+                   rsp.br_image_off);
+      BOOT_LOG_DBG("Image version: v%d.%d.%d", rsp.br_hdr->ih_ver.iv_major,
+                                               rsp.br_hdr->ih_ver.iv_minor,
+                                               rsp.br_hdr->ih_ver.iv_revision);
+        BOOT_LOG_DBG("Setting magic pattern (validation)");
+        set_is_image_validated_pattern();
+        BOOT_LOG_DBG("REBOOTING!");
+        sys_reboot(0);
+    }
+#endif
 
 #ifdef CONFIG_BOOT_SERIAL_BOOT_MODE
     if (io_detect_boot_mode()) {
@@ -658,13 +768,17 @@ int main(void)
     BOOT_LOG_INF("Bootloader chainload address offset: 0x%x",
                  rsp.br_hdr->ih_load_addr);
 #else
+#ifndef CONFIG_CUSTOM_MCUBOOT_BOOTLOADER
     BOOT_LOG_INF("Bootloader chainload address offset: 0x%x",
                  rsp.br_image_off);
 #endif
+#endif
 
+#ifndef CONFIG_CUSTOM_MCUBOOT_BOOTLOADER
     BOOT_LOG_INF("Image version: v%d.%d.%d", rsp.br_hdr->ih_ver.iv_major,
                                                     rsp.br_hdr->ih_ver.iv_minor,
                                                     rsp.br_hdr->ih_ver.iv_revision);
+#endif
 
 #if defined(MCUBOOT_DIRECT_XIP)
     BOOT_LOG_INF("Jumping to the image slot");
